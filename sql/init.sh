@@ -19,3 +19,13 @@ mysql -u"$ISUCON_DB_USER" \
 # SQLiteのデータベースを初期化
 rm -f ../tenant_db/*.db
 cp -r ../../initial_data/*.db ../tenant_db/
+# SQLiteに対してINDEXを作成
+# データベースファイルの一覧を取得
+DB_FILES=$(find ../tenant_db -name *.db)
+# 各データベースファイルに対してSQLを実行
+SQL_FILE=tenant/11_index.sql
+for DB_FILE in $DB_FILES; do
+    echo "Executing SQL file $SQL_FILE on database $DB_FILE"
+    sqlite3 "$DB_FILE" < "$SQL_FILE"
+    echo "Done"
+done

@@ -30,6 +30,7 @@ import (
 
 const (
 	tenantDBSchemaFilePath = "../sql/tenant/10_schema.sql"
+	tenantDBIndexFilePath  = "../sql/tenant/11_index.sql"
 	initializeScript       = "../sql/init.sh"
 	cookieName             = "isuports_session"
 
@@ -92,6 +93,10 @@ func createTenantDB(id int64) error {
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 %s < %s", p, tenantDBSchemaFilePath))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to exec sqlite3 %s < %s, out=%s: %w", p, tenantDBSchemaFilePath, string(out), err)
+	}
+	cmd2 := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 %s < %s", p, tenantDBIndexFilePath))
+	if out, err := cmd2.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to exec sqlite3 %s < %s, out=%s: %w", p, tenantDBIndexFilePath, string(out), err)
 	}
 	return nil
 }
