@@ -718,7 +718,9 @@ func tenantsBillingHandler(c echo.Context) error {
 	wg.Wait()
 	// 並列処理の結果をテナントIDでソート(降順)
 	sort.Slice(tenantBillings, func(i, j int) bool {
-		return tenantBillings[i].ID > tenantBillings[j].ID
+		ti, _ := strconv.Atoi(tenantBillings[i].ID)
+		tj, _ := strconv.Atoi(tenantBillings[j].ID)
+		return ti > tj
 	})
 	return c.JSON(http.StatusOK, SuccessResult{
 		Status: true,
