@@ -1,7 +1,8 @@
-ALTER TABLE `visit_history`
+ALTER TABLE visit_history
 ADD
-    INDEX `visit_history_multi_index` (
-        `tenant_id`,
-        `competition_id`,
-        `created_at`
+    INDEX idx_all_cover (
+        tenant_id,
+        competition_id,
+        player_id,
+        created_at
     );
