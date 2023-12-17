@@ -7,14 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -523,6 +526,20 @@ type VisitHistorySummaryRow struct {
 	MinCreatedAt int64  `db:"min_created_at"`
 }
 
+// テナントごとの課金レポートを計算する
+// func billingReportByTenant(ctx context.Context, tenantDB dbOrTx, tr TenantRow) (*TenantWithBilling, error) {
+// 	tenantWithBilling := TenantWithBilling{
+// 		ID: tr.ID,
+// 		Name: tr.Name,
+// 		DisplayName: tr.DisplayName,
+// 	}
+// 	if err := tenantDB.SelectContext(
+// 		ctx,
+// 		&tenantWithBilling,
+// 		"SELECT"
+// 	)
+// }
+
 // 大会ごとの課金レポートを計算する
 func billingReportByCompetition(ctx context.Context, tenantDB dbOrTx, tenantID int64, competitonID string) (*BillingReport, error) {
 	comp, err := retrieveCompetition(ctx, tenantDB, competitonID)
@@ -637,6 +654,11 @@ func tenantsBillingHandler(c echo.Context) error {
 			)
 		}
 	}
+	// 指定なしの場合には全件取得
+	if beforeID == 0 {
+		beforeID = math.MaxInt64
+	}
+
 	// テナントごとに
 	//   大会ごとに
 	//     scoreが登録されているplayer * 100
@@ -644,15 +666,23 @@ func tenantsBillingHandler(c echo.Context) error {
 	//   を合計したものを
 	// テナントの課金とする
 	ts := []TenantRow{}
-	if err := adminDB.SelectContext(ctx, &ts, "SELECT * FROM tenant ORDER BY id DESC"); err != nil {
+	if err := adminDB.SelectContext(
+		ctx,
+		&ts,
+		"SELECT * FROM tenant WHERE id < ? ORDER BY id DESC LIMIT 10",
+		beforeID,
+	); err != nil {
 		return fmt.Errorf("error Select tenant: %w", err)
 	}
 	tenantBillings := make([]TenantWithBilling, 0, len(ts))
+	var wg sync.WaitGroup
+	errChan := make(chan error, 10)
+	defer close(errChan)
 	for _, t := range ts {
-		if beforeID != 0 && beforeID <= t.ID {
-			continue
-		}
-		err := func(t TenantRow) error {
+		// tenantDBへのアクセスは独立なので並列で処理
+		wg.Add(1)
+		go func(t TenantRow) {
+			defer wg.Done()
 			tb := TenantWithBilling{
 				ID:          strconv.FormatInt(t.ID, 10),
 				Name:        t.Name,
@@ -660,7 +690,8 @@ func tenantsBillingHandler(c echo.Context) error {
 			}
 			tenantDB, err := connectToTenantDB(t.ID)
 			if err != nil {
-				return fmt.Errorf("failed to connectToTenantDB: %w", err)
+				errChan <- fmt.Errorf("failed to connectToTenantDB: %w", err)
+				return
 			}
 			defer tenantDB.Close()
 			cs := []CompetitionRow{}
@@ -670,25 +701,25 @@ func tenantsBillingHandler(c echo.Context) error {
 				"SELECT * FROM competition WHERE tenant_id=?",
 				t.ID,
 			); err != nil {
-				return fmt.Errorf("failed to Select competition: %w", err)
+				errChan <- fmt.Errorf("failed to Select competition: %w", err)
+				return
 			}
 			for _, comp := range cs {
 				report, err := billingReportByCompetition(ctx, tenantDB, t.ID, comp.ID)
 				if err != nil {
-					return fmt.Errorf("failed to billingReportByCompetition: %w", err)
+					errChan <- fmt.Errorf("failed to billingReportByCompetition: %w", err)
 				}
 				tb.BillingYen += report.BillingYen
 			}
 			tenantBillings = append(tenantBillings, tb)
-			return nil
+			return
 		}(t)
-		if err != nil {
-			return err
-		}
-		if len(tenantBillings) >= 10 {
-			break
-		}
 	}
+	wg.Wait()
+	// 並列処理の結果をテナントIDでソート(降順)
+	sort.Slice(tenantBillings, func(i, j int) bool {
+		return tenantBillings[i].ID > tenantBillings[j].ID
+	})
 	return c.JSON(http.StatusOK, SuccessResult{
 		Status: true,
 		Data: TenantsBillingHandlerResult{
