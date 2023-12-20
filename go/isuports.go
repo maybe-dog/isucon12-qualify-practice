@@ -53,7 +53,8 @@ var (
 	sqliteDriverName = "sqlite3"
 
 	// テナントDB用のMAP
-	// tenantDBs = make(map[string]*sqlx.DB)
+	TenantDBs          = make(map[int64]*sqlx.DB)
+	tenantConnectMutex = new(sync.Mutex)
 )
 
 // 環境変数を取得する、なければデフォルト値を返す
@@ -85,11 +86,17 @@ func tenantDBPath(id int64) string {
 
 // テナントDBに接続する
 func connectToTenantDB(id int64) (*sqlx.DB, error) {
+	tenantConnectMutex.Lock()
+	defer tenantConnectMutex.Unlock()
+	if db, found := TenantDBs[id]; found {
+		return db, nil
+	}
 	p := tenantDBPath(id)
 	db, err := sqlx.Open(sqliteDriverName, fmt.Sprintf("file:%s?mode=rw&_timeout=20000", p))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tenant DB: %w", err)
 	}
+	TenantDBs[id] = db
 	return db, nil
 }
 
@@ -181,7 +188,7 @@ func Run() {
 		e.Logger.Fatalf("failed to connect db: %v", err)
 		return
 	}
-	adminDB.SetMaxOpenConns(10)
+	adminDB.SetMaxOpenConns(100)
 	defer adminDB.Close()
 
 	port := getEnv("SERVER_APP_PORT", "3000")
@@ -529,20 +536,6 @@ type VisitHistorySummaryRow struct {
 	MinCreatedAt int64  `db:"min_created_at"`
 }
 
-// テナントごとの課金レポートを計算する
-// func billingReportByTenant(ctx context.Context, tenantDB dbOrTx, tr TenantRow) (*TenantWithBilling, error) {
-// 	tenantWithBilling := TenantWithBilling{
-// 		ID: tr.ID,
-// 		Name: tr.Name,
-// 		DisplayName: tr.DisplayName,
-// 	}
-// 	if err := tenantDB.SelectContext(
-// 		ctx,
-// 		&tenantWithBilling,
-// 		"SELECT"
-// 	)
-// }
-
 // 大会ごとの課金レポートを計算する
 func billingReportByCompetition(ctx context.Context, tenantDB dbOrTx, tenantID int64, competitonID string) (*BillingReport, error) {
 	comp, err := retrieveCompetition(ctx, tenantDB, competitonID)
@@ -689,7 +682,7 @@ func tenantsBillingHandler(c echo.Context) error {
 				errChan <- fmt.Errorf("failed to connectToTenantDB: %w", err)
 				return
 			}
-			defer tenantDB.Close()
+
 			cs := []CompetitionRow{}
 			if err := tenantDB.SelectContext(
 				ctx,
@@ -752,7 +745,6 @@ func playersListHandler(c echo.Context) error {
 	if err != nil {
 		return fmt.Errorf("error connectToTenantDB: %w", err)
 	}
-	defer tenantDB.Close()
 
 	var pls []PlayerRow
 	if err := tenantDB.SelectContext(
@@ -798,7 +790,6 @@ func playersAddHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	params, err := c.FormParams()
 	if err != nil {
@@ -861,7 +852,6 @@ func playerDisqualifiedHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	playerID := c.Param("player_id")
 
@@ -921,7 +911,6 @@ func competitionsAddHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	title := c.FormValue("title")
 
@@ -967,7 +956,6 @@ func competitionFinishHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	id := c.Param("competition_id")
 	if id == "" {
@@ -1017,7 +1005,6 @@ func competitionScoreHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	competitionID := c.Param("competition_id")
 	if competitionID == "" {
@@ -1172,7 +1159,6 @@ func billingHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	cs := []CompetitionRow{}
 	if err := tenantDB.SelectContext(
@@ -1229,7 +1215,6 @@ func playerHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
@@ -1334,7 +1319,6 @@ func competitionRankingHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
@@ -1433,7 +1417,6 @@ func playerCompetitionsHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	if err := authorizePlayer(ctx, tenantDB, v.playerID); err != nil {
 		return err
@@ -1457,7 +1440,6 @@ func organizerCompetitionsHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tenantDB.Close()
 
 	return competitionsHandler(c, v, tenantDB)
 }
