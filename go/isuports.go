@@ -51,6 +51,9 @@ var (
 	adminDB *sqlx.DB
 
 	sqliteDriverName = "sqlite3"
+
+	// テナントDB用のMAP
+	// tenantDBs = make(map[string]*sqlx.DB)
 )
 
 // 環境変数を取得する、なければデフォルト値を返す
@@ -83,7 +86,7 @@ func tenantDBPath(id int64) string {
 // テナントDBに接続する
 func connectToTenantDB(id int64) (*sqlx.DB, error) {
 	p := tenantDBPath(id)
-	db, err := sqlx.Open(sqliteDriverName, fmt.Sprintf("file:%s?mode=rw", p))
+	db, err := sqlx.Open(sqliteDriverName, fmt.Sprintf("file:%s?mode=rw&_timeout=20000", p))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tenant DB: %w", err)
 	}
